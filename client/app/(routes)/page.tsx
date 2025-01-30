@@ -12,10 +12,12 @@ export default function Home(): ReactElement {
     <main className="min-h-screen w-full flex items-center justify-center p-4">
       <div className="w-full max-w-4xl mx-auto">
         <HelloWorld />
-        <TelegramUser />
-        <TwitterLogin />
-        <DiscordLogin />
-        <GithubLogin />
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <TelegramUser />
+          <TwitterLogin />
+          <DiscordLogin />
+          <GithubLogin />
+        </div>
       </div>
     </main>
   );

@@ -34,13 +34,12 @@ export default function HelloWorld() {
 
   return (
     <div className="flex flex-col items-center w-full space-y-6 p-4">
-      <Card className="w-full max-w-3xl">
+      <Card className="w-full max-w-3xl rounded-2xl border-violet-500">
         <CardHeader>
-          <CardTitle>Hello AI Agent Starter Kit</CardTitle>
+          <CardTitle>Bufficorn AI</CardTitle>
           <CardDescription>
-            Get started on the client by editing{" "}
-            <span className="font-bold text-blue-500">
-              /client/app/_components/HelloWorld.tsx
+            <span className="">
+              Some shiz here...
             </span>
           </CardDescription>
         </CardHeader>
@@ -69,10 +68,7 @@ export default function HelloWorld() {
                     <Terminal className="h-4 w-4" />
                     <AlertTitle>Server Configuration</AlertTitle>
                     <AlertDescription>
-                      Get started on the server by editing{" "}
-                      <code className="font-bold text-blue-500">
-                        /server/src/routes/hello.ts
-                      </code>
+                      Server is running
                     </AlertDescription>
                   </Alert>
 
