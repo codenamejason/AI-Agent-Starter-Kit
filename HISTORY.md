@@ -1,5 +1,20 @@
 # 📝 Changelog
 
+## [v2.0.0](https://github.com/collabland/AI-Agent-Starter-Kit/tree/v2.0.0) (2025-01-29)
+
+[Full Changelog](https://github.com/collabland/AI-Agent-Starter-Kit/compare/v1.5.0...v2.0.0)
+
+📋 Closed Issues
+
+- Thanks for the star, @jamesyoung! [\#10](https://github.com/collabland/AI-Agent-Starter-Kit/issues/10)
+
+📦 Pull Requests
+
+- feat: finalise orbis PRs [\#19](https://github.com/collabland/AI-Agent-Starter-Kit/pull/19) ([gitaalekhyapaul](https://github.com/gitaalekhyapaul))
+- feat: make twitter optional with telegram [\#17](https://github.com/collabland/AI-Agent-Starter-Kit/pull/17) ([dav1do](https://github.com/dav1do))
+- feat: Gated data plugin example [\#15](https://github.com/collabland/AI-Agent-Starter-Kit/pull/15) ([dav1do](https://github.com/dav1do))
+- Fix: NGROK tunneling [\#14](https://github.com/collabland/AI-Agent-Starter-Kit/pull/14) ([gitaalekhyapaul](https://github.com/gitaalekhyapaul))
+
 ## [v1.4.3](https://github.com/collabland/AI-Agent-Starter-Kit/tree/v1.4.3) (2025-01-03)
 
 [Full Changelog](https://github.com/collabland/AI-Agent-Starter-Kit/compare/v1.4.2...v1.4.3)

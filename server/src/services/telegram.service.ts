@@ -16,12 +16,27 @@ import { keccak256, getBytes, toUtf8Bytes } from "ethers";
 import { TwitterService } from "./twitter.service.js";
 import { NgrokService } from "./ngrok.service.js";
 
+// hack to avoid 400 errors sending params back to telegram. not even close to perfect
+const htmlEscape = (_key: AnyType, val: AnyType) => {
+  if (typeof val === "string") {
+    return val
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;"); // single quote
+  }
+  return val;
+};
+
 const __dirname = path.dirname(new URL(import.meta.url).pathname);
 export class TelegramService extends BaseService {
   private static instance: TelegramService;
   private bot: Bot;
   private webhookUrl: string;
   private elizaService: ElizaService;
+  private nGrokService: NgrokService;
+  private twitterService?: TwitterService;
 
   private constructor(webhookUrl?: string) {
     super();
@@ -82,9 +97,24 @@ export class TelegramService extends BaseService {
         console.error("Telegram bot error:", error);
       });
       await this.elizaService.start();
+      // required when starting server for telegram webooks
+      this.nGrokService = await NgrokService.getInstance();
+      try {
+        // try starting the twitter service
+        this.twitterService = await TwitterService.getInstance();
+        await this.twitterService?.start();
+        console.log(
+          "Twitter Bot Profile:",
+          JSON.stringify(this.twitterService.me, null, 2)
+        );
+      } catch (err) {
+        console.log(
+          "[WARN] [telegram.service] Unable to use twitter. Functionality will be disabled",
+          err
+        );
+      }
 
       this.bot.command("mint", async (ctx) => {
-        const ngrokURL = await NgrokService.getInstance().getUrl();
         try {
           ctx.reply("Minting your token...");
           const tokenPath = getTokenMetadataPath();
@@ -132,48 +162,51 @@ You can view the token page below (it takes a few minutes to be visible)`,
               parse_mode: "HTML",
             }
           );
-          const twitterClient = await TwitterService.getInstance().getScraper();
-          const twitterBotInfo = await twitterClient.me();
-          await ctx.reply(
-            `🐦 Posting a tweet about the new token...\n\n` +
-              `Twitter account details:\n<pre lang="json"><code>${JSON.stringify(
-                twitterBotInfo,
-                null,
-                2
-              )}</code></pre>`,
-            {
-              parse_mode: "HTML",
-            }
-          );
-          const claimURL = `${process.env.NEXT_PUBLIC_HOSTNAME}/claim/${tokenData.address}`;
-          const botUsername = twitterBotInfo?.username;
-          console.log("botUsername:", botUsername);
-          console.log("claimURL:", claimURL);
-          const slug =
-            Buffer.from(claimURL).toString("base64url") +
-            ":" +
-            Buffer.from(botUsername!).toString("base64url");
-          console.log("slug:", slug);
-          const cardURL = `${ngrokURL}/auth/twitter/card/${slug}/index.html`;
-          console.log("cardURL:", cardURL);
-          const twtRes = await twitterClient.sendTweet(
-            `I just minted a token on Base using Wow!\nThe ticker is $${tokenData.symbol}\nClaim early alpha here: ${cardURL}`
-          );
-          if (twtRes.ok) {
-            const tweetId = (await twtRes.json()) as AnyType;
-            console.log("Tweet posted successfully:", tweetId);
-            const tweetURL = `https://twitter.com/${twitterBotInfo?.username}/status/${tweetId?.data?.create_tweet?.tweet_results?.result?.rest_id}`;
-            console.log("Tweet URL:", tweetURL);
+          if (this.twitterService) {
+            const twitterBotInfo = this.twitterService.me;
+            const twitterClient = this.twitterService.getScraper();
+            const ngrokURL = this.nGrokService.getUrl();
             await ctx.reply(
-              `Tweet posted successfully!\n\n` +
-                `🎉 Tweet details: ${tweetURL}`,
+              `🐦 Posting a tweet about the new token...\n\n` +
+                `Twitter account details:\n<pre lang="json"><code>${JSON.stringify(
+                  twitterBotInfo,
+                  null,
+                  2
+                )}</code></pre>`,
               {
                 parse_mode: "HTML",
               }
             );
-          } else {
-            console.error("Failed to post tweet:", await twtRes.json());
-            await ctx.reply("Failed to post tweet");
+            const claimURL = `${process.env.NEXT_PUBLIC_HOSTNAME}/claim/${tokenData.address}`;
+            const botUsername = twitterBotInfo?.username;
+            console.log("botUsername:", botUsername);
+            console.log("claimURL:", claimURL);
+            const slug =
+              Buffer.from(claimURL).toString("base64url") +
+              ":" +
+              Buffer.from(botUsername!).toString("base64url");
+            console.log("slug:", slug);
+            const cardURL = `${ngrokURL}/auth/twitter/card/${slug}/index.html`;
+            console.log("cardURL:", cardURL);
+            const twtRes = await twitterClient.sendTweet(
+              `I just minted a token on Base using Wow!\nThe ticker is $${tokenData.symbol}\nClaim early alpha here: ${cardURL}`
+            );
+            if (twtRes.ok) {
+              const tweetId = (await twtRes.json()) as AnyType;
+              console.log("Tweet posted successfully:", tweetId);
+              const tweetURL = `https://twitter.com/${twitterBotInfo?.username}/status/${tweetId?.data?.create_tweet?.tweet_results?.result?.rest_id}`;
+              console.log("Tweet URL:", tweetURL);
+              await ctx.reply(
+                `Tweet posted successfully!\n\n` +
+                  `🎉 Tweet details: ${tweetURL}`,
+                {
+                  parse_mode: "HTML",
+                }
+              );
+            } else {
+              console.error("Failed to post tweet:", await twtRes.json());
+              await ctx.reply("Failed to post tweet");
+            }
           }
         } catch (error) {
           if (isAxiosError(error)) {
@@ -207,31 +240,76 @@ You can view the token page below (it takes a few minutes to be visible)`,
           const actionHash = actionHashes[action];
           console.log("actionHash:", actionHash);
           if (!actionHash) {
-            ctx.reply("Action not found");
+            ctx.reply(`Action not found: ${action}`);
             return;
           }
-          // ! NOTE: The message to sign can be any normal message, or raw TX
-          // ! In order to sign EIP-191 message, you need to encode it properly, Lit protocol does raw signatures
-          const messageToSign =
-            ctx.from?.username ?? ctx.from?.first_name ?? "";
-          const messageToSignDigest = keccak256(toUtf8Bytes(messageToSign));
           // ! NOTE: You can send any jsParams you want here, it depends on your Lit action code
-          const jsParams = {
-            helloName: messageToSign,
-            toSign: Array.from(getBytes(messageToSignDigest)),
-          };
+          let jsParams;
           // ! NOTE: You can change the chainId to any chain you want to execute the action on
           const chainId = 8453;
+          switch (action) {
+            case "hello-action": {
+              // ! NOTE: The message to sign can be any normal message, or raw TX
+              // ! In order to sign EIP-191 message, you need to encode it properly, Lit protocol does raw signatures
+              const messageToSign =
+                ctx.from?.username ?? ctx.from?.first_name ?? "";
+              const messageToSignDigest = keccak256(toUtf8Bytes(messageToSign));
+              jsParams = {
+                helloName: messageToSign,
+                toSign: Array.from(getBytes(messageToSignDigest)),
+              };
+              break;
+            }
+            case "decrypt-action": {
+              const toEncrypt = `encrypt-decrypt-test-${new Date().toUTCString()}`;
+              ctx.reply(`Invoking encrypt action with ${toEncrypt}`);
+              const { data } = await client.post(
+                `/telegrambot/executeLitActionUsingPKP?chainId=${chainId}`,
+                {
+                  actionIpfs: actionHashes["encrypt-action"].IpfsHash,
+                  actionJsParams: {
+                    toEncrypt,
+                  },
+                }
+              );
+              console.log("encrypt response ", data);
+              const { ciphertext, dataToEncryptHash } = JSON.parse(
+                data.response.response
+              );
+              jsParams = {
+                ciphertext,
+                dataToEncryptHash,
+                chain: "base",
+              };
+              break;
+            }
+            case "encrypt-action": {
+              const message =
+                ctx.from?.username ?? ctx.from?.first_name ?? "test data";
+              jsParams = {
+                toEncrypt: `${message}-${new Date().toUTCString()}`,
+              };
+              break;
+            }
+            default: {
+              // they typed something random or a dev forgot to update this list
+              ctx.reply(`Action not handled: ${action}`);
+              return;
+            }
+          }
           await ctx.reply(
             "Executing action..." +
               `\n\nAction Hash: <code>${actionHash.IpfsHash}</code>\n\nParams:\n<pre lang="json"><code>${JSON.stringify(
                 jsParams,
-                null,
+                htmlEscape,
                 2
               )}</code></pre>`,
             {
               parse_mode: "HTML",
             }
+          );
+          console.log(
+            `[telegram.service] executing lit action with hash ${actionHash.IpfsHash} on chain ${chainId}`
           );
           const { data } = await client.post(
             `/telegrambot/executeLitActionUsingPKP?chainId=${chainId}`,
@@ -240,8 +318,9 @@ You can view the token page below (it takes a few minutes to be visible)`,
               actionJsParams: jsParams,
             }
           );
-          console.log("Action executed on Lit Nodes 🔥");
-          console.log("Action:", actionHash.IpfsHash);
+          console.log(
+            `Action with hash ${actionHash.IpfsHash} executed on Lit Nodes 🔥`
+          );
           console.log("Result:", data);
           ctx.reply(
             `Action executed on Lit Nodes 🔥\n\n` +

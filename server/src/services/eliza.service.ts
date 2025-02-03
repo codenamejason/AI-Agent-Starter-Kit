@@ -16,6 +16,7 @@ import Database from "better-sqlite3";
 import path from "path";
 import { readFileSync, existsSync } from "fs";
 import { resolve } from "path";
+import { gateDataPlugin } from "../plugins/gated-storage-plugin/index.js";
 
 const __dirname = path.dirname(new URL(import.meta.url).pathname);
 
@@ -41,6 +42,7 @@ import { Message } from "grammy/types";
 import { Bot, Context } from "grammy";
 import { bootstrapPlugin } from "@ai16z/plugin-bootstrap";
 import { collablandPlugin } from "../plugins/collabland.plugin.js";
+import { StorageService } from "../plugins/gated-storage-plugin/services/storage.service.js";
 
 const MAX_MESSAGE_LENGTH = 4096; // Telegram's max message length
 
@@ -121,7 +123,10 @@ Thread of Tweets You Are Replying To:
 
 const telegramMessageHandlerTemplate =
   // {{goals}}
-  `# Action Examples
+  `# Action Names
+{{actionNames}}
+
+# Action Examples
 {{actionExamples}}
 (Action examples are for reference only. Do not use the information from them in your response.)
 
@@ -134,7 +139,7 @@ About {{agentName}}:
 {{lore}}
 
 Examples of {{agentName}}'s dialog and actions:
-{{characterMessageExamples}}
+{{messageExamples}}
 
 {{providers}}
 
@@ -171,7 +176,7 @@ export class MessageManager {
   private async processImage(
     message: Message
   ): Promise<{ description: string } | null> {
-    // console.log(
+    // elizaLogger.info(
     //     "🖼️ Processing image message:",
     //     JSON.stringify(message, null, 2)
     // );
@@ -308,25 +313,27 @@ export class MessageManager {
     context: string
   ): Promise<Content | null> {
     const { userId, roomId } = message;
-    console.log("[_generateResponse] check1");
+    elizaLogger.debug("[_generateResponse] check1");
     const response = await generateMessageResponse({
       runtime: this.runtime,
       context,
       modelClass: ModelClass.MEDIUM,
     });
-    console.log("[_generateResponse] check2");
+    elizaLogger.debug("[_generateResponse] check2");
     if (!response) {
       console.error("❌ No response from generateMessageResponse");
       return null;
     }
-    console.log("[_generateResponse] check3");
+    elizaLogger.debug("[_generateResponse] check3");
+    // store the response in the database
+
     await this.runtime.databaseAdapter.log({
       body: { message, context, response },
       userId: userId,
       roomId,
       type: "response",
     });
-    console.log("[_generateResponse] check4");
+    elizaLogger.debug("[_generateResponse] check4");
     return response;
   }
 
@@ -398,28 +405,28 @@ export class MessageManager {
       const content: Content = {
         text: fullText,
         source: "telegram",
-        // inReplyTo:
-        //     "reply_to_message" in message && message.reply_to_message
-        //         ? stringToUuid(
-        //               message.reply_to_message.message_id.toString() +
-        //                   "-" +
-        //                   this.runtime.agentId
-        //           )
-        //         : undefined,
+        inReplyTo:
+          "reply_to_message" in message && message.reply_to_message
+            ? stringToUuid(
+                message.reply_to_message.message_id.toString() +
+                  "-" +
+                  this.runtime.agentId
+              )
+            : undefined,
       };
 
       // Create memory for the message
-      const memory: Memory = {
+
+      const memory = await this.runtime.messageManager.addEmbeddingToMemory({
         id: messageId,
         agentId,
         userId,
         roomId,
         content,
         createdAt: message.date * 1000,
-        embedding: getEmbeddingZeroVector(),
-      };
-
-      await this.runtime.messageManager.createMemory(memory);
+      });
+      // set unique to avoid duplicating memories
+      await this.runtime.messageManager.createMemory(memory, true);
       // Update state with the new memory
       let state = await this.runtime.composeState(memory);
       state = await this.runtime.updateRecentMessageState(state);
@@ -427,7 +434,6 @@ export class MessageManager {
       const shouldRespond = await this._shouldRespond(message, state);
 
       if (shouldRespond) {
-        // Generate response
         const context = composeContext({
           state,
           template:
@@ -435,7 +441,10 @@ export class MessageManager {
             this.runtime.character?.templates?.messageHandlerTemplate ||
             telegramMessageHandlerTemplate,
         });
-        console.log("[handleMessage] context", context);
+        elizaLogger.debug(
+          "[handleMessage] context",
+          JSON.stringify(context, null, 2)
+        );
         const responseContent = await this._generateResponse(
           memory,
           state,
@@ -474,6 +483,9 @@ export class MessageManager {
               createdAt: sentMessage.date * 1000,
               embedding: getEmbeddingZeroVector(),
             };
+            elizaLogger.info(
+              `[eliza.service] memory action ${memory.content.action}`
+            );
 
             // Set action to CONTINUE for all messages except the last one
             // For the last message, use the original action from the response content
@@ -492,16 +504,18 @@ export class MessageManager {
         // Update state after response
         state = await this.runtime.updateRecentMessageState(state);
 
-        // Handle any resulting actions
+        elizaLogger.debug("[eliza.service] processing resulting actions");
         await this.runtime.processActions(
           memory,
           responseMessages,
           state,
           callback
         );
-      }
 
-      await this.runtime.evaluate(memory, state, shouldRespond);
+        elizaLogger.debug("[eliza.service] evaluating");
+        const data = await this.runtime.evaluate(memory, state, shouldRespond);
+        elizaLogger.debug(`[eliza.service] evaluated ${data}`);
+      }
     } catch (error) {
       console.error("❌ Error handling message:", error);
       console.error("Error sending message:", error);
@@ -522,7 +536,9 @@ export class ElizaService extends BaseService {
     let character: Character;
 
     if (!process.env.ELIZA_CHARACTER_PATH) {
-      console.log("No ELIZA_CHARACTER_PATH defined, using default character");
+      elizaLogger.info(
+        "No ELIZA_CHARACTER_PATH defined, using default character"
+      );
       character = defaultCharacter;
     } else {
       try {
@@ -532,7 +548,7 @@ export class ElizaService extends BaseService {
           "../../..",
           process.env.ELIZA_CHARACTER_PATH
         );
-        console.log(`Loading character from: ${fullPath}`);
+        elizaLogger.info(`Loading character from: ${fullPath}`);
 
         if (!existsSync(fullPath)) {
           throw new Error(`Character file not found at ${fullPath}`);
@@ -540,13 +556,16 @@ export class ElizaService extends BaseService {
 
         const fileContent = readFileSync(fullPath, "utf-8");
         character = JSON.parse(fileContent);
-        console.log("Successfully loaded custom character:", character.name);
+        elizaLogger.info(
+          "Successfully loaded custom character:",
+          character.name
+        );
       } catch (error) {
         console.error(
           `Failed to load character from ${process.env.ELIZA_CHARACTER_PATH}:`,
           error
         );
-        console.log("Falling back to default character");
+        elizaLogger.info("Falling back to default character");
         character = defaultCharacter;
       }
     }
@@ -554,13 +573,13 @@ export class ElizaService extends BaseService {
     // character.modelProvider = ModelProviderName.GAIANET // FIX: Commented out since model provider is best set from character.json
 
     const sqlitePath = path.join(__dirname, "..", "..", "..", "eliza.sqlite");
-    console.log("Using SQLite database at:", sqlitePath);
+    elizaLogger.info("Using SQLite database at:", sqlitePath);
     // Initialize SQLite adapter
     const db = new SqliteDatabaseAdapter(new Database(sqlitePath));
 
     db.init()
       .then(() => {
-        console.log("Database initialized.");
+        elizaLogger.info("Database initialized.");
       })
       .catch((error) => {
         console.error("Failed to initialize database:", error);
@@ -571,10 +590,10 @@ export class ElizaService extends BaseService {
       this.runtime = new AgentRuntime({
         databaseAdapter: db,
         token: process.env.OPENAI_API_KEY || "",
-        modelProvider: character.modelProvider || ModelProviderName.GAIANET,
+        modelProvider: character.modelProvider || ModelProviderName.OPENAI,
         character,
         conversationLength: 4096,
-        plugins: [bootstrapPlugin, collablandPlugin],
+        plugins: [bootstrapPlugin, collablandPlugin, gateDataPlugin],
         cacheManager: new CacheManager(new MemoryCacheAdapter()),
         logging: true,
       });
@@ -601,11 +620,18 @@ export class ElizaService extends BaseService {
 
   public async start(): Promise<void> {
     try {
+      // make sure this gets initialized before anything tries to use it in the plugin.
+      // not sure where this should actually be hooked up
+      await StorageService.getInstance().start();
+    } catch (err) {
+      elizaLogger.warn("[eliza] gated storage service is unavailable");
+    }
+    try {
       //register AI based command handlers here
       this.bot.command("eliza", (ctx) =>
         this.messageManager.handleMessage(ctx)
       );
-      console.log("Eliza service started successfully");
+      elizaLogger.info("Eliza service started successfully");
     } catch (error) {
       console.error("Failed to start Eliza service:", error);
       throw error;
@@ -618,7 +644,7 @@ export class ElizaService extends BaseService {
 
   public async stop(): Promise<void> {
     try {
-      console.log("Eliza service stopped");
+      elizaLogger.info("Eliza service stopped");
     } catch (error) {
       console.error("Error stopping Eliza service:", error);
     }
