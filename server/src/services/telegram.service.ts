@@ -84,12 +84,15 @@ export class TelegramService extends BaseService {
       //all command descriptions can be added here
       this.bot.api.setMyCommands([
         {
-          command: "start",
-          description: "Add any hello world functionality to your bot",
+          command: "professorgwei",
+          description: "Find a bounty and team AI Agent",
         },
-        { command: "mint", description: "Mint a token on Wow.xyz" },
+        // { command: "captainethereum", description: "FAQ AI Agent" },
+        // { command: "sporkman", description: "" },
+        // { command: "mightymarmot", description: "Sponsor & Career Guide" },
         { command: "eliza", description: "Talk to the AI agent" },
-        { command: "lit", description: "Execute a Lit action" },
+        // { command: "mint", description: "Mint a token on Wow.xyz" },
+        // { command: "lit", description: "Execute a Lit action" },
       ]);
       // all command handlers can be registered here
       this.bot.command("start", (ctx) => ctx.reply("Hello!"));

@@ -25,7 +25,7 @@ export default function TelegramUser() {
       {!user ? (
         <TelegramLoginButton
           botName={
-            process.env.NEXT_PUBLIC_TELEGRAM_BOT_NAME || "CollabathonBot"
+            process.env.NEXT_PUBLIC_TELEGRAM_BOT_NAME || "ethdenver_agent_bot"
           }
           onAuth={handleTelegramAuth}
         />
